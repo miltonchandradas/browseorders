@@ -14,7 +14,7 @@
 		"resources": "resources.json",
 		"dataSources": {
 			"mainService": {
-				"uri": "/here/goes/your/serviceUrl/",
+				"uri": "http://localhost:8081/services.odata.org/V2/Northwind/Northwind.svc",
 				"type": "OData",
 				"settings": {
 					"odataVersion": "2.0",
@@ -57,7 +57,6 @@
 				"sap.f": {}
 			}
 		},
-
 		"contentDensities": {
 			"compact": true,
 			"cozy": true
@@ -72,7 +71,10 @@
 			},
 			"": {
 				"dataSource": "mainService",
-				"preload": true
+				"preload": true,
+				"settings": {
+					"useBatch": false
+				}
 			}
 		},
 
@@ -96,7 +98,7 @@
 					"target": "master"
 				},
 				{
-					"pattern": "Objects/{objectId}",
+					"pattern": "Orders/{objectId}/:?query:",
 					"name": "object",
 					"target": [
 						"master",
@@ -125,6 +127,18 @@
 				"notFound": {
 					"viewName": "NotFound",
 					"viewId": "notFound"
+				},
+				"shipping": {
+					"viewName": "Shipping",
+					"parent": "object",
+					"controlId": "iconTabFilterShipping",
+					"controlAggregation": "content"
+				},
+				"processor": {
+					"viewName": "Processor",
+					"parent": "object",
+					"controlId": "iconTabFilterProcessor",
+					"controlAggregation": "content"
 				}
 			}
 		}

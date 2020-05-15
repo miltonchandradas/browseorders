@@ -3,12 +3,16 @@ sap.ui.define([
 	"sap/ui/model/json/JSONModel",
 	"../model/formatter",
 	"sap/m/library"
-], function (BaseController, JSONModel, formatter, mobileLibrary) {
+], function(BaseController, JSONModel, formatter, mobileLibrary) {
 	"use strict";
 
 	// shortcut for sap.m.URLHelper
 	var URLHelper = mobileLibrary.URLHelper;
 
+	function _calculateOrderTotal (fPreviousTotal, oCurrentContext) {
+		var fItemTotal = oCurrentContext.getObject().Quantity * oCurrentContext.getObject().UnitPrice;
+		return fPreviousTotal + fItemTotal;
+	}
 	return BaseController.extend("sap.ui.demo.masterdetail.controller.Detail", {
 
 		formatter: formatter,
@@ -21,10 +25,16 @@ sap.ui.define([
 			// Model used to manipulate control states. The chosen values make sure,
 			// detail page is busy indication immediately so there is no break in
 			// between the busy indication for loading the view's meta data
+			this._aValidKeys = ["shipping", "processor"];
 			var oViewModel = new JSONModel({
 				busy : false,
 				delay : 0,
-				lineItemListTitle : this.getResourceBundle().getText("detailLineItemTableHeading")
+				lineItemListTitle : this.getResourceBundle().getText("detailLineItemTableHeading"),
+				// Set fixed currency on view model (as the OData service does not provide a currency).
+				currency : "EUR",
+				// the sum of all items of this order
+				totalOrderAmount: 0,
+				selectedTab: ""
 			});
 
 			this.getRouter().getRoute("object").attachPatternMatched(this._onObjectMatched, this);
@@ -60,11 +70,14 @@ sap.ui.define([
 		 */
 		onListUpdateFinished : function (oEvent) {
 			var sTitle,
+				fOrderTotal = 0,
 				iTotalItems = oEvent.getParameter("total"),
-				oViewModel = this.getModel("detailView");
+				oViewModel = this.getModel("detailView"),
+				oItemsBinding = oEvent.getSource().getBinding("items"),
+				aItemsContext;
 
 			// only update the counter if the length is final
-			if (this.byId("lineItemsList").getBinding("items").isLengthFinal()) {
+			if (oItemsBinding.isLengthFinal()) {
 				if (iTotalItems) {
 					sTitle = this.getResourceBundle().getText("detailLineItemTableHeadingCount", [iTotalItems]);
 				} else {
@@ -72,7 +85,12 @@ sap.ui.define([
 					sTitle = this.getResourceBundle().getText("detailLineItemTableHeading");
 				}
 				oViewModel.setProperty("/lineItemListTitle", sTitle);
+
+				aItemsContext = oItemsBinding.getContexts();
+				fOrderTotal = aItemsContext.reduce(_calculateOrderTotal, 0);
+				oViewModel.setProperty("/totalOrderAmount", fOrderTotal);
 			}
+
 		},
 
 		/* =========================================================== */
@@ -86,14 +104,30 @@ sap.ui.define([
 		 * @private
 		 */
 		_onObjectMatched : function (oEvent) {
-			var sObjectId =  oEvent.getParameter("arguments").objectId;
-			this.getModel("appView").setProperty("/layout", "TwoColumnsMidExpanded");
+			var oArguments = oEvent.getParameter("arguments");
+			this._sObjectId = oArguments.objectId;
+			// Don't show two columns when in full screen mode
+			if (this.getModel("appView").getProperty("/layout") !== "MidColumnFullScreen") {
+				this.getModel("appView").setProperty("/layout", "TwoColumnsMidExpanded");
+			}
 			this.getModel().metadataLoaded().then( function() {
-				var sObjectPath = this.getModel().createKey("Objects", {
-					ObjectID :  sObjectId
+				var sObjectPath = this.getModel().createKey("Orders", {
+					OrderID :  this._sObjectId
 				});
 				this._bindView("/" + sObjectPath);
 			}.bind(this));
+			var oQuery = oArguments["?query"];
+			if (oQuery && this._aValidKeys.indexOf(oQuery.tab) >= 0){
+				this.getView().getModel("detailView").setProperty("/selectedTab", oQuery.tab);
+				this.getRouter().getTargets().display(oQuery.tab);
+			} else {
+				this.getRouter().navTo("object", {
+					objectId: this._sObjectId,
+					query: {
+						tab: "shipping"
+					}
+				}, true);
+			}
 		},
 
 		/**
@@ -112,6 +146,9 @@ sap.ui.define([
 
 			this.getView().bindElement({
 				path : sObjectPath,
+				parameters: {
+					expand: "Customer,Order_Details/Product,Employee"
+				},
 				events: {
 					change : this._onBindingChange.bind(this),
 					dataRequested : function () {
@@ -140,8 +177,8 @@ sap.ui.define([
 			var sPath = oElementBinding.getPath(),
 				oResourceBundle = this.getResourceBundle(),
 				oObject = oView.getModel().getObject(sPath),
-				sObjectId = oObject.ObjectID,
-				sObjectName = oObject.Name,
+				sObjectId = oObject.OrderID,
+				sObjectName = oObject.OrderID,
 				oViewModel = this.getModel("detailView");
 
 			this.getOwnerComponent().oListSelector.selectAListItem(sPath);
@@ -149,7 +186,7 @@ sap.ui.define([
 			oViewModel.setProperty("/shareSendEmailSubject",
 				oResourceBundle.getText("shareSendEmailObjectSubject", [sObjectId]));
 			oViewModel.setProperty("/shareSendEmailMessage",
-				oResourceBundle.getText("shareSendEmailObjectMessage", [sObjectName, sObjectId, location.href]));
+				oResourceBundle.getText("shareSendEmailObjectMessage", [sObjectName, sObjectId, location.href, oObject.ShipName, oObject.EmployeeID, oObject.CustomerID]));
 		},
 
 		_onMetadataLoaded : function () {
@@ -173,6 +210,21 @@ sap.ui.define([
 			oViewModel.setProperty("/busy", true);
 			// Restore original busy indicator delay for the detail view
 			oViewModel.setProperty("/delay", iOriginalViewBusyDelay);
+		},
+		onTabSelect : function(oEvent){
+			var sSelectedTab = oEvent.getParameter("selectedKey");
+			this.getRouter().navTo("object", {
+				objectId: this._sObjectId,
+				query: {
+					tab: sSelectedTab
+				}
+			}, true);// true without history
+
+		},
+
+		_onHandleTelephonePress : function (oEvent){
+			var sNumber = oEvent.getSource().getText();
+			URLHelper.triggerTel(sNumber);
 		},
 
 		/**
@@ -199,7 +251,8 @@ sap.ui.define([
 				// reset to previous layout
 				this.getModel("appView").setProperty("/layout",  this.getModel("appView").getProperty("/previousLayout"));
 			}
-		}
-	});
 
+		}
+
+	});
 });
